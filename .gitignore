@@ -1,6 +1,19 @@
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyd
+*.pyo
+*.pkl
+*.log
+.venv/
 venv/
-.env
+
+# Streamlit
 .streamlit/
+
+# Env / secrets
+.env
+
+# OS
 .DS_Store
+Thumbs.db

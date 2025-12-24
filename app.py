@@ -1,60 +1,109 @@
 import os
+import tempfile
+
 import streamlit as st
 from dotenv import load_dotenv
-from PyPDF2 import PdfReader
 
-from langchain_text_splitters import CharacterTextSplitter
-from langchain_community.vectorstores import FAISS
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-from langchain.chains import RetrievalQA
+from helper import build_vectorstore_from_pdf, answer_question
 
-# Load environment variables
 load_dotenv()
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-st.set_page_config(page_title="PDF Q&A Bot", page_icon="📄")
-st.title("📄 PDF Q&A Chatbot (Modern LangChain)")
+st.set_page_config(page_title="PDF Q&A Bot", page_icon="📄", layout="centered")
+st.title("Ask Questions from your PDF 📄🤖")
+st.caption("Upload a PDF, then ask questions. The app retrieves relevant passages and answers using OpenAI.")
 
-# Helper functions
-def load_pdf(file):
-    reader = PdfReader(file)
-    text = ""
-    for page in reader.pages:
-        text += page.extract_text()
-    return text
+api_key = os.getenv("OPENAI_API_KEY", "").strip()
 
-def split_text(text):
-    splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
-    return splitter.split_text(text)
+with st.sidebar:
+    st.header("Settings")
+    model = st.selectbox("Model", ["gpt-4o-mini", "gpt-4.1-mini", "gpt-4.1"], index=0)
+    temperature = st.slider("Temperature", 0.0, 1.0, 0.0, 0.1)
+    k = st.slider("How many chunks to retrieve (k)", 2, 10, 4, 1)
+    st.divider()
+    st.write("API Key")
+    if api_key:
+        st.success("OPENAI_API_KEY found in environment ✅")
+    else:
+        st.warning("No OPENAI_API_KEY found. Add it to a .env file or your environment variables.")
 
-def create_vector_store(chunks):
-    embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
-    return FAISS.from_texts(chunks, embedding=embeddings)
+pdf = st.file_uploader("Upload a PDF", type=["pdf"])
 
-# File uploader
-pdf = st.file_uploader("Upload a PDF file", type="pdf")
+# Session state: keep vectorstore for the current uploaded PDF
+if "vectorstore" not in st.session_state:
+    st.session_state.vectorstore = None
+if "pdf_fingerprint" not in st.session_state:
+    st.session_state.pdf_fingerprint = None
+if "chat" not in st.session_state:
+    st.session_state.chat = []  # list of (role, text)
 
-if pdf:
-    with st.spinner("📖 Reading PDF..."):
-        text = load_pdf(pdf)
-        chunks = split_text(text)
-    with st.spinner("🔎 Creating FAISS vector store..."):
-        vectorstore = create_vector_store(chunks)
-    st.success("PDF indexed successfully!")
+def fingerprint(file_bytes: bytes) -> str:
+    # small fingerprint for caching within a session
+    import hashlib
+    return hashlib.sha256(file_bytes).hexdigest()
 
-    query = st.text_input("Ask a question about the PDF")
+if pdf is not None:
+    file_bytes = pdf.getvalue()
+    fp = fingerprint(file_bytes)
 
-    if query:
-        with st.spinner("🤖 Generating answer..."):
-            llm = ChatOpenAI(
-                model="gpt-4o-mini",
-                temperature=0,
-                openai_api_key=OPENAI_API_KEY
-            )
-            qa_chain = RetrievalQA.from_chain_type(
-                llm=llm,
-                retriever=vectorstore.as_retriever()
-            )
-            answer = qa_chain.run(query)
-        st.markdown("### ✅ Answer")
-        st.write(answer)
+    if st.session_state.pdf_fingerprint != fp:
+        # New PDF uploaded: rebuild index
+        st.session_state.pdf_fingerprint = fp
+        st.session_state.vectorstore = None
+        st.session_state.chat = []
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            tmp.write(file_bytes)
+            tmp_path = tmp.name
+
+        with st.spinner("Reading PDF and building search index..."):
+            try:
+                st.session_state.vectorstore = build_vectorstore_from_pdf(tmp_path, api_key=api_key)
+                st.success("PDF indexed. Ask away!")
+            except Exception as e:
+                st.error(f"Failed to process PDF: {e}")
+            finally:
+                try:
+                    os.remove(tmp_path)
+                except Exception:
+                    pass
+
+if st.session_state.vectorstore is None:
+    st.info("Upload a PDF to start.")
+    st.stop()
+
+st.subheader("Chat")
+
+# Render chat history
+for role, content in st.session_state.chat:
+    with st.chat_message(role):
+        st.markdown(content)
+
+user_q = st.chat_input("Ask a question about the PDF...")
+if user_q:
+    st.session_state.chat.append(("user", user_q))
+    with st.chat_message("user"):
+        st.markdown(user_q)
+
+    with st.chat_message("assistant"):
+        with st.spinner("Thinking..."):
+            try:
+                answer, sources = answer_question(
+                    query=user_q,
+                    vectorstore=st.session_state.vectorstore,
+                    api_key=api_key,
+                    model=model,
+                    temperature=temperature,
+                    k=k,
+                )
+                st.markdown(answer)
+
+                if sources:
+                    with st.expander("Sources used"):
+                        for i, s in enumerate(sources, start=1):
+                            st.markdown(f"**{i}.** {s}")
+            except Exception as e:
+                st.error(f"Error: {e}")
+                answer = None
+
+    if answer is not None:
+        st.session_state.chat.append(("assistant", answer))
