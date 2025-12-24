@@ -12,9 +12,6 @@ from langchain.chains import RetrievalQA
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-from langchain_openai import OpenAI
-
-llm = OpenAI(temperature=0, openai_api_key="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")
 
 st.set_page_config(page_title="PDF Q&A Bot", page_icon="📄")
 st.title("📄 PDF Q&A Chatbot")
