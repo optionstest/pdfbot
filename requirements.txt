@@ -1,10 +1,7 @@
+langchain==0.0.353
+openai
 streamlit
-python-dotenv
-PyPDF2
-faiss-cpu
 tiktoken
-
-langchain
-langchain-community
-langchain-openai
-langchain-text-splitters
+PyPDF2
+python-dotenv
+faiss-cpu
