@@ -48,3 +48,13 @@ if pdf:
         with st.spinner("🤖 Generating answer..."):
             llm = ChatOpenAI(
                 model="gpt-4o-mini",
+                temperature=0,
+                openai_api_key=OPENAI_API_KEY
+            )
+            qa_chain = RetrievalQA.from_chain_type(
+                llm=llm,
+                retriever=vectorstore.as_retriever()
+            )
+            answer = qa_chain.run(query)
+        st.markdown("### ✅ Answer")
+        st.write(answer)
